@@ -56,8 +56,6 @@
 #         else:
 #             st.success("✅ Not Spam")
 
-
-
 from flask import Flask, render_template, request
 import pickle
 import nltk
@@ -68,17 +66,21 @@ from nltk.stem.porter import PorterStemmer
 # Initialize Flask app
 app = Flask(__name__)
 
-# Download NLTK data (only once)
-nltk.download('punkt')
-nltk.download('stopwords')
+# Ensure NLTK data is available
+nltk_packages = ["punkt", "punkt_tab", "stopwords"]
+for pkg in nltk_packages:
+    try:
+        nltk.data.find(f"tokenizers/{pkg}") if "punkt" in pkg else nltk.data.find(f"corpora/{pkg}")
+    except LookupError:
+        nltk.download(pkg)
 
 # Load preprocessing tools
 ps = PorterStemmer()
-stop_words = set(stopwords.words('english'))
+stop_words = set(stopwords.words("english"))
 
 # Load fitted vectorizer and trained model
-tfidf = pickle.load(open('vectorizer.pkl', 'rb'))
-model = pickle.load(open('model.pkl', 'rb'))
+tfidf = pickle.load(open("vectorizer.pkl", "rb"))
+model = pickle.load(open("model.pkl", "rb"))
 
 # Text preprocessing function
 def transform_text(text):
@@ -114,7 +116,7 @@ def home():
                 prediction = "✅ Not Spam"
         else:
             prediction = "⚠ Please enter a message."
-    
+
     return render_template("index.html", prediction=prediction)
 
 if __name__ == "__main__":
