@@ -56,68 +56,71 @@
 #         else:
 #             st.success("✅ Not Spam")
 
-from flask import Flask, render_template, request
+import os
+import pathlib
 import pickle
 import nltk
-import string
+from flask import Flask, render_template, request
 from nltk.corpus import stopwords
 from nltk.stem.porter import PorterStemmer
 
-# Initialize Flask app
-app = Flask(__name__)
+# --- Paths ---
+BASE_DIR = pathlib.Path(__file__).resolve().parent
 
-# Ensure NLTK data is available
-nltk_packages = ["punkt", "punkt_tab", "stopwords"]
-for pkg in nltk_packages:
+# --- Flask ---
+app = Flask(__name__, template_folder=str(BASE_DIR / "templates"))
+
+# --- NLTK data (vendor or cache inside repo) ---
+NLTK_DIR = BASE_DIR / "nltk_data"
+os.environ["NLTK_DATA"] = str(NLTK_DIR)  # look here first
+
+# Try to use vendored data; fallback to download (not ideal on Render)
+def ensure_nltk():
     try:
-        nltk.data.find(f"tokenizers/{pkg}") if "punkt" in pkg else nltk.data.find(f"corpora/{pkg}")
+        nltk.data.find("tokenizers/punkt")
     except LookupError:
-        nltk.download(pkg)
+        nltk.download("punkt", download_dir=str(NLTK_DIR))
+    try:
+        nltk.data.find("corpora/stopwords")
+    except LookupError:
+        nltk.download("stopwords", download_dir=str(NLTK_DIR))
 
-# Load preprocessing tools
+ensure_nltk()
+
 ps = PorterStemmer()
 stop_words = set(stopwords.words("english"))
 
-# Load fitted vectorizer and trained model
-tfidf = pickle.load(open("vectorizer.pkl", "rb"))
-model = pickle.load(open("model.pkl", "rb"))
+# --- Load artifacts with absolute paths ---
+with open(BASE_DIR / "vectorizer.pkl", "rb") as f:
+    tfidf = pickle.load(f)
+with open(BASE_DIR / "model.pkl", "rb") as f:
+    model = pickle.load(f)
 
-# Text preprocessing function
-def transform_text(text):
+def transform_text(text: str) -> str:
     text = text.lower()
-    text = nltk.word_tokenize(text)
+    tokens = nltk.word_tokenize(text)
+    tokens = [t for t in tokens if t.isalnum()]
+    tokens = [t for t in tokens if t not in stop_words]
+    tokens = [ps.stem(t) for t in tokens]
+    return " ".join(tokens)
 
-    # Remove non-alphanumeric tokens
-    y = [i for i in text if i.isalnum()]
+@app.get("/")
+def index():
+    return render_template("index.html")
 
-    # Remove stopwords
-    y = [i for i in y if i not in stop_words]
-
-    # Stemming
-    y = [ps.stem(i) for i in y]
-
-    return " ".join(y)
-
-# Home route
-@app.route("/", methods=["GET", "POST"])
-def home():
-    prediction = None
-    if request.method == "POST":
-        input_sms = request.form["message"]
-
-        if input_sms.strip() != "":
-            transformed_sms = transform_text(input_sms)
-            vector_input = tfidf.transform([transformed_sms])
-            result = model.predict(vector_input)[0]
-
-            if result == 1:
-                prediction = "🚫 Spam"
-            else:
-                prediction = "✅ Not Spam"
-        else:
-            prediction = "⚠ Please enter a message."
-
+@app.post("/")
+def predict():
+    input_sms = request.form.get("message", "").strip()
+    if not input_sms:
+        return render_template("index.html", prediction="⚠ Please enter a message.")
+    transformed = transform_text(input_sms)
+    vector = tfidf.transform([transformed])
+    result = model.predict(vector)[0]
+    prediction = "🚫 Spam" if result == 1 else "✅ Not Spam"
     return render_template("index.html", prediction=prediction)
 
-if __name__ == "__main__":
-    app.run(debug=True)
+@app.get("/health")
+def health():
+    return "ok", 200
+
+# Do NOT call app.run() here; Render will start via gunicorn.
